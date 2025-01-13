@@ -1,0 +1,118 @@
+services:
+   phpmyadmin:
+     container_name: phpmyadmin
+     image: linuxserver/phpmyadmin
+     environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - PMA_ARBITRARY=1
+      - PMA_ABSOLUTE_URI=http://php.marketing.localhost
+     volumes:
+      - ${PHP_MYADMIN_PATH}:/config
+     ports:
+      - "90:80"
+     labels:
+      - traefik.enable=true
+      - traefik.http.routers.phpmyadmin.rule=Host(`php.marketing.localhost`)
+      - traefik.http.routers.phpmyadmin.entrypoints=php
+     networks:
+      - proxy
+   wordpress-db:
+     container_name: db
+     #image: mariadb:latest
+     image: mysql
+     ports:
+       - "3306:3306"
+     #image: my_db
+     #entrypoint: /bin/sh
+     restart: unless-stopped
+     volumes:
+       - ${DB_PATH}:/var/lib/mysql
+     environment:
+       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+       MYSQL_DATABASE: ${MYSQL_DATABASE}
+       MYSQL_USER: ${MYSQL_USER}
+       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+     expose:
+       - ${PORTDB}
+     healthcheck:
+      test: mysql --user=${MYSQL_USER} --password=${MYSQL_PASSWORD} --database=${MYSQL_DATABASE} --silent --execute "SHOW DATABASES"
+      interval: 2m
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+     labels:
+       - traefik.enable=true
+       - traefik.http.routers.wordpress-db.rule=Host(`db.marketing.localhost`)
+       - traefik.http.routers.wordpress-db.entrypoints=sql
+     networks:
+       - proxy
+   wordpress-server:
+     container_name: wp-server
+     image: wordpress:latest
+     #entrypoint: /bin/sh
+     ports:
+       - "80:80"
+     #  - "88:80"
+     #  - "4443:443"
+     restart: unless-stopped
+     volumes:
+       - ${WP_CORE}:/var/www/html
+       - ${WP_CONTENT}:/var/www/html/wp-content
+     environment:
+       WORDPRESS_DB_HOST: ${MYSQL_HOST}
+       WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+       WORDPRESS_DB_USER: ${MYSQL_USER}
+       WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+       WORDPRESS_TABLE_PREFIX: ${WORDPRESS_TABLE_PREFIX}
+       VIRTUAL_HOST: ${DOMAINS}
+     logging:
+       options:
+         max-size: ${LOGGING_OPTIONS_MAX_SIZE:-200k}
+     links:
+      - wordpress-db
+     depends_on:
+      - wordpress-db
+      - reverse-proxy
+     expose:
+       - ${PORTWEBSITE}
+     #healthcheck:
+     # test: ["CMD", "curl", "--fail", "--silent", "http://localhost"]
+     # interval: 1m30s
+     # timeout: 10s
+     # retries: 3
+     # start_period: 40s
+     labels:
+      - traefik.enable=true
+      - traefik.http.routers.wordpress-server.rule=Host(`traefik.marketing.localhost`)
+      - traefik.http.routers.wordpress-server.entrypoints=traefik
+     networks:
+      - proxy
+   reverse-proxy:
+    container_name: traefik
+    # The official v3 Traefik docker image
+    image: traefik:v3.3
+    # Enables the web UI and tells Traefik to listen to docker
+    command:
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker"
+      - "--entryPoints.web.address=:80"
+      - "--entryPoints.sql.address=:3306"
+      - "--entryPoints.php.address=:90"
+      - "--entryPoints.traefik.address=:8080"
+    ports:
+      # The HTTP port
+      #- "80:80"
+      # - "3306:3306"
+      # The Web UI (enabled by --api.insecure=true)
+      - "8080:8080"
+    volumes:
+      # So that Traefik can listen to the Docker events
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - proxy
+networks:
+  proxy:
+    name: proxy
